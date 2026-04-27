@@ -13,6 +13,7 @@ contract Mirror is IMirror {
     address public admin;
     mapping(address => bool) public authorizedRelayers;
     mapping(bytes32 => AntibodyLib.Antibody) private _antibodies;
+    mapping(address => bytes32) public blockedByAntibody;
 
     modifier onlyAdmin() {
         if (msg.sender != admin) revert NotAdmin();
@@ -91,8 +92,22 @@ contract Mirror is IMirror {
         revert("not implemented");
     }
 
-    function setAddressBlock(address, bytes32) external onlyRelayer {
-        revert("not implemented");
+    /// @inheritdoc IMirror
+    /// @dev Last-write-wins. Pass `bytes32(0)` to clear. Reverts if the
+    ///      target keccakId has not been mirrored, so the emitted
+    ///      `AddressBlocked.publisher` field is always populated and
+    ///      consumers cannot end up with dangling pointers.
+    function setAddressBlock(address target, bytes32 keccakId) external onlyRelayer {
+        if (target == address(0)) revert ZeroAddress();
+        if (keccakId == bytes32(0)) {
+            blockedByAntibody[target] = bytes32(0);
+            emit AddressBlocked(target, bytes32(0), address(0));
+            return;
+        }
+        address publisher = _antibodies[keccakId].publisher;
+        if (publisher == address(0)) revert AntibodyNotMirrored(keccakId);
+        blockedByAntibody[target] = keccakId;
+        emit AddressBlocked(target, keccakId, publisher);
     }
 
     function unmirrorAntibody(bytes32) external onlyRelayer {
@@ -107,8 +122,8 @@ contract Mirror is IMirror {
         return _antibodies[keccakId];
     }
 
-    function isBlocked(address) external pure returns (bytes32) {
-        revert("not implemented");
+    function isBlocked(address target) external view returns (bytes32) {
+        return blockedByAntibody[target];
     }
 
     function getAntibodiesByPublisher(address) external pure returns (bytes32[] memory) {
