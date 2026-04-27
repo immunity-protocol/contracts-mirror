@@ -7,6 +7,11 @@ import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 
+import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
+import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
+import {SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
+import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
+
 import {ImmunityHook} from "../src/ImmunityHook.sol";
 import {IMirror} from "../src/interfaces/IMirror.sol";
 
@@ -49,6 +54,87 @@ contract ImmunityHookTest is Test {
 
         hook = new ImmunityHook{salt: salt}(POOL_MANAGER_PLACEHOLDER, IMirror(address(mockMirror)));
         assertEq(address(hook), expected, "mined address mismatch");
+    }
+}
+
+contract ImmunityHookBlockingTest is ImmunityHookTest {
+    address internal token0Addr = address(0x0000000000000000000000000000000000000a01);
+    address internal token1Addr = address(0x0000000000000000000000000000000000000a02);
+    address internal swapRouter = address(0x80007e8);
+    address internal eoa = address(0xE0A);
+
+    bytes32 internal idSender = keccak256("ab.sender");
+    bytes32 internal idOrigin = keccak256("ab.origin");
+    bytes32 internal idToken0 = keccak256("ab.token0");
+    bytes32 internal idToken1 = keccak256("ab.token1");
+
+    function _key() internal view returns (PoolKey memory) {
+        return PoolKey({
+            currency0: Currency.wrap(token0Addr),
+            currency1: Currency.wrap(token1Addr),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: IHooks(address(hook))
+        });
+    }
+
+    function _swapParams() internal pure returns (SwapParams memory) {
+        return SwapParams({zeroForOne: true, amountSpecified: -1e18, sqrtPriceLimitX96: 4295128740});
+    }
+
+    function _callBeforeSwap() internal {
+        vm.prank(address(POOL_MANAGER_PLACEHOLDER));
+        vm.txGasPrice(0); // not strictly needed but keeps gas measurement reproducible
+        hook.beforeSwap(swapRouter, _key(), _swapParams(), "");
+    }
+
+    function test_PassesWhenNothingBlocked() public {
+        // Should not revert.
+        _callBeforeSwap();
+    }
+
+    function test_RevertsOnBlockedSender() public {
+        mockMirror.setBlock(swapRouter, idSender);
+        vm.prank(address(POOL_MANAGER_PLACEHOLDER));
+        vm.expectRevert(abi.encodeWithSelector(ImmunityHook.SenderBlocked.selector, swapRouter, idSender));
+        hook.beforeSwap(swapRouter, _key(), _swapParams(), "");
+    }
+
+    function test_RevertsOnBlockedOrigin() public {
+        mockMirror.setBlock(eoa, idOrigin);
+        vm.prank(address(POOL_MANAGER_PLACEHOLDER), eoa); // sets msg.sender + tx.origin
+        vm.expectRevert(abi.encodeWithSelector(ImmunityHook.OriginBlocked.selector, eoa, idOrigin));
+        hook.beforeSwap(swapRouter, _key(), _swapParams(), "");
+    }
+
+    function test_RevertsOnBlockedToken0() public {
+        mockMirror.setBlock(token0Addr, idToken0);
+        vm.prank(address(POOL_MANAGER_PLACEHOLDER));
+        vm.expectRevert(abi.encodeWithSelector(ImmunityHook.TokenBlocked.selector, token0Addr, idToken0));
+        hook.beforeSwap(swapRouter, _key(), _swapParams(), "");
+    }
+
+    function test_RevertsOnBlockedToken1() public {
+        mockMirror.setBlock(token1Addr, idToken1);
+        vm.prank(address(POOL_MANAGER_PLACEHOLDER));
+        vm.expectRevert(abi.encodeWithSelector(ImmunityHook.TokenBlocked.selector, token1Addr, idToken1));
+        hook.beforeSwap(swapRouter, _key(), _swapParams(), "");
+    }
+
+    function test_OnlyPoolManagerCanCallBeforeSwap() public {
+        vm.expectRevert(); // BaseHook.NotPoolManager
+        hook.beforeSwap(swapRouter, _key(), _swapParams(), "");
+    }
+
+    function test_NativeTokenZeroAddressIsNotChecked() public {
+        // currency0 = address(0) (native ETH) — must be skipped, not flagged.
+        PoolKey memory key = _key();
+        key.currency0 = Currency.wrap(address(0));
+        // Even if address(0) were "blocked", the hook short-circuits the check.
+        mockMirror.setBlock(address(0), keccak256("zero-shouldnt-matter"));
+
+        vm.prank(address(POOL_MANAGER_PLACEHOLDER));
+        hook.beforeSwap(swapRouter, key, _swapParams(), "");
     }
 }
 
