@@ -208,6 +208,90 @@ contract MirrorAuxiliaryEventTest is MirrorTest {
     }
 }
 
+contract MirrorAddressIndexTest is MirrorTest {
+    address internal targetA = makeAddr("targetA");
+
+    function _mirror(bytes32 matcher) internal returns (bytes32 id, AntibodyLib.Antibody memory a) {
+        a = _addressAntibody(publisher, matcher);
+        id = AntibodyLib.computeKeccakId(a);
+        vm.prank(relayer);
+        mirror.mirrorAntibody(a, bytes32(uint256(uint160(targetA))));
+    }
+
+    function test_SetAddressBlock_Writes() public {
+        (bytes32 id,) = _mirror(bytes32(uint256(1)));
+        vm.prank(relayer);
+        vm.expectEmit(true, true, true, true);
+        emit IMirror.AddressBlocked(targetA, id, publisher);
+        mirror.setAddressBlock(targetA, id);
+        assertEq(mirror.isBlocked(targetA), id);
+    }
+
+    function test_SetAddressBlock_LastWriteWins() public {
+        (bytes32 idA,) = _mirror(bytes32(uint256(1)));
+        (bytes32 idB,) = _mirror(bytes32(uint256(2)));
+        assertTrue(idA != idB);
+        vm.startPrank(relayer);
+        mirror.setAddressBlock(targetA, idA);
+        mirror.setAddressBlock(targetA, idB);
+        vm.stopPrank();
+        assertEq(mirror.isBlocked(targetA), idB);
+    }
+
+    function test_SetAddressBlock_Clears() public {
+        (bytes32 id,) = _mirror(bytes32(uint256(1)));
+        vm.prank(relayer);
+        mirror.setAddressBlock(targetA, id);
+        assertEq(mirror.isBlocked(targetA), id);
+
+        vm.prank(relayer);
+        vm.expectEmit(true, true, true, true);
+        emit IMirror.AddressBlocked(targetA, bytes32(0), address(0));
+        mirror.setAddressBlock(targetA, bytes32(0));
+        assertEq(mirror.isBlocked(targetA), bytes32(0));
+    }
+
+    function test_SetAddressBlock_RevertsIfAntibodyNotMirrored() public {
+        bytes32 unknownId = keccak256("not-yet-mirrored");
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(IMirror.AntibodyNotMirrored.selector, unknownId));
+        mirror.setAddressBlock(targetA, unknownId);
+    }
+
+    function test_SetAddressBlock_RevertsOnZeroTarget() public {
+        vm.prank(relayer);
+        vm.expectRevert(IMirror.ZeroAddress.selector);
+        mirror.setAddressBlock(address(0), bytes32(uint256(1)));
+    }
+
+    function test_IsBlockedReturnsZeroForUnknownAddress() public {
+        assertEq(mirror.isBlocked(makeAddr("never-blocked")), bytes32(0));
+    }
+
+    function test_MirrorAddressAntibody_OneTxSetsIndexAndEmits() public {
+        AntibodyLib.Antibody memory a = _addressAntibody(publisher, bytes32(uint256(0xface)));
+        bytes32 id = AntibodyLib.computeKeccakId(a);
+
+        vm.prank(relayer);
+        // Expect AntibodyMirrored followed by AddressBlocked — exactly two log entries
+        vm.expectEmit(true, true, true, true);
+        emit IMirror.AntibodyMirrored(id, publisher, a.abType);
+        vm.expectEmit(true, true, true, true);
+        emit IMirror.AddressBlocked(targetA, id, publisher);
+        mirror.mirrorAddressAntibody(a, targetA);
+
+        assertEq(mirror.isBlocked(targetA), id);
+        assertEq(mirror.getAntibody(id).publisher, publisher);
+    }
+
+    function test_MirrorAddressAntibody_RevertsOnZeroTarget() public {
+        AntibodyLib.Antibody memory a = _addressAntibody(publisher, bytes32(uint256(1)));
+        vm.prank(relayer);
+        vm.expectRevert(IMirror.ZeroAddress.selector);
+        mirror.mirrorAddressAntibody(a, address(0));
+    }
+}
+
 contract MirrorAccessControlTest is MirrorTest {
     function test_ConstructorSetsAdminAndRelayer() public view {
         assertEq(mirror.admin(), admin, "admin");
