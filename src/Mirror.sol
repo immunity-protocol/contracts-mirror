@@ -14,6 +14,7 @@ contract Mirror is IMirror {
     mapping(address => bool) public authorizedRelayers;
     mapping(bytes32 => AntibodyLib.Antibody) private _antibodies;
     mapping(address => bytes32) public blockedByAntibody;
+    mapping(address => bytes32[]) private _publisherAntibodies;
 
     modifier onlyAdmin() {
         if (msg.sender != admin) revert NotAdmin();
@@ -60,7 +61,9 @@ contract Mirror is IMirror {
     ///      trust a relayer-supplied id.
     function mirrorAntibody(AntibodyLib.Antibody calldata a, bytes32 auxiliaryKey) external onlyRelayer {
         bytes32 keccakId = AntibodyLib.computeKeccakId(a);
+        bool firstTime = _antibodies[keccakId].publisher == address(0);
         _antibodies[keccakId] = a;
+        if (firstTime) _publisherAntibodies[a.publisher].push(keccakId);
         emit AntibodyMirrored(keccakId, a.publisher, a.abType);
         _emitAuxiliary(a.abType, a.flavor, keccakId, auxiliaryKey, a.publisher);
     }
@@ -95,7 +98,9 @@ contract Mirror is IMirror {
     function mirrorAddressAntibody(AntibodyLib.Antibody calldata a, address target) external onlyRelayer {
         if (target == address(0)) revert ZeroAddress();
         bytes32 keccakId = AntibodyLib.computeKeccakId(a);
+        bool firstTime = _antibodies[keccakId].publisher == address(0);
         _antibodies[keccakId] = a;
+        if (firstTime) _publisherAntibodies[a.publisher].push(keccakId);
         blockedByAntibody[target] = keccakId;
         emit AntibodyMirrored(keccakId, a.publisher, a.abType);
         emit AddressBlocked(target, keccakId, a.publisher);
@@ -119,8 +124,16 @@ contract Mirror is IMirror {
         emit AddressBlocked(target, keccakId, publisher);
     }
 
-    function unmirrorAntibody(bytes32) external onlyRelayer {
-        revert("not implemented");
+    /// @inheritdoc IMirror
+    /// @dev Does not sweep `blockedByAntibody` entries pointing at this
+    ///      keccakId, nor `_publisherAntibodies`. The relayer must clear
+    ///      address-index entries explicitly. Publisher index keeps the
+    ///      historical list — consumers filter on
+    ///      `getAntibody(id).publisher != address(0)`.
+    function unmirrorAntibody(bytes32 keccakId) external onlyRelayer {
+        if (_antibodies[keccakId].publisher == address(0)) revert AntibodyNotMirrored(keccakId);
+        delete _antibodies[keccakId];
+        emit AntibodyUnmirrored(keccakId);
     }
 
     // ------------------------------------------------------------------
@@ -135,7 +148,7 @@ contract Mirror is IMirror {
         return blockedByAntibody[target];
     }
 
-    function getAntibodiesByPublisher(address) external pure returns (bytes32[] memory) {
-        revert("not implemented");
+    function getAntibodiesByPublisher(address publisher) external view returns (bytes32[] memory) {
+        return _publisherAntibodies[publisher];
     }
 }
