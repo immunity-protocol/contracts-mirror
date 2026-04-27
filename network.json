@@ -3,9 +3,9 @@
     "name": "sepolia",
     "rpcUrl": "${SEPOLIA_RPC_URL}",
     "poolManager": "0xE03A1074c86CFeDd5C142C4F04F1a1536e203543",
-    "mirror": null,
-    "hook": null,
-    "deployedAt": null
+    "mirror": "0x1be1Ec2F7E2230f9bB1Aa3d5589bB58F8DfD52c7",
+    "hook": "0xd3335F3d69e97C314350EDA63fB5Ba0163Dd0080",
+    "deployedAt": "2026-04-27T18:34:41Z"
   },
   "84532": {
     "name": "base-sepolia",
