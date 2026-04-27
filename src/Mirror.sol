@@ -12,6 +12,7 @@ import {AntibodyLib} from "./libraries/Antibody.sol";
 contract Mirror is IMirror {
     address public admin;
     mapping(address => bool) public authorizedRelayers;
+    mapping(bytes32 => AntibodyLib.Antibody) private _antibodies;
 
     modifier onlyAdmin() {
         if (msg.sender != admin) revert NotAdmin();
@@ -51,8 +52,15 @@ contract Mirror is IMirror {
     //  Writes — stubbed; filled in by subsequent commits.
     // ------------------------------------------------------------------
 
-    function mirrorAntibody(AntibodyLib.Antibody calldata, bytes32) external onlyRelayer {
-        revert("not implemented");
+    /// @inheritdoc IMirror
+    /// @dev Idempotent: a second call with the same canonical fields
+    ///      overwrites the slot in place. The keccakId is derived from
+    ///      the struct (same algorithm as the Registry) — no need to
+    ///      trust a relayer-supplied id.
+    function mirrorAntibody(AntibodyLib.Antibody calldata a, bytes32 /*auxiliaryKey*/) external onlyRelayer {
+        bytes32 keccakId = AntibodyLib.computeKeccakId(a);
+        _antibodies[keccakId] = a;
+        emit AntibodyMirrored(keccakId, a.publisher, a.abType);
     }
 
     function mirrorAddressAntibody(AntibodyLib.Antibody calldata, address) external onlyRelayer {
@@ -71,8 +79,8 @@ contract Mirror is IMirror {
     //  Reads — stubbed; filled in by subsequent commits.
     // ------------------------------------------------------------------
 
-    function getAntibody(bytes32) external pure returns (AntibodyLib.Antibody memory) {
-        revert("not implemented");
+    function getAntibody(bytes32 keccakId) external view returns (AntibodyLib.Antibody memory) {
+        return _antibodies[keccakId];
     }
 
     function isBlocked(address) external pure returns (bytes32) {
