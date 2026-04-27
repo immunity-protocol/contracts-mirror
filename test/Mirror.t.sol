@@ -33,6 +33,105 @@ contract MirrorTest is Test {
     }
 }
 
+contract MirrorRoundTripTest is MirrorTest {
+    function test_RoundTripAntibody() public {
+        AntibodyLib.Antibody memory a = _addressAntibody(publisher, bytes32(uint256(0xdead)));
+        a.evidenceCid = bytes32(uint256(0xc1d));
+        a.contextHash = bytes32(uint256(0xc7c));
+        a.embeddingHash = bytes32(uint256(0xe1b));
+        a.attestation = bytes32(uint256(0xa11));
+        a.reviewer = makeAddr("reviewer");
+        a.stakeAmount = 1_000_000;
+        a.stakeLockUntil = 2_000_000_000;
+        a.expiresAt = 2_500_000_000;
+        a.immSeq = 42;
+        a.isSeeded = 1;
+
+        bytes32 expectedId = AntibodyLib.computeKeccakId(a);
+        vm.prank(relayer);
+        mirror.mirrorAntibody(a, bytes32(0));
+
+        AntibodyLib.Antibody memory got = mirror.getAntibody(expectedId);
+        assertEq(got.publisher, a.publisher);
+        assertEq(got.primaryMatcherHash, a.primaryMatcherHash);
+        assertEq(got.evidenceCid, a.evidenceCid);
+        assertEq(got.contextHash, a.contextHash);
+        assertEq(got.embeddingHash, a.embeddingHash);
+        assertEq(got.attestation, a.attestation);
+        assertEq(got.reviewer, a.reviewer);
+        assertEq(got.stakeAmount, a.stakeAmount);
+        assertEq(got.stakeLockUntil, a.stakeLockUntil);
+        assertEq(got.expiresAt, a.expiresAt);
+        assertEq(got.immSeq, a.immSeq);
+        assertEq(got.abType, a.abType);
+        assertEq(got.flavor, a.flavor);
+        assertEq(got.verdict, a.verdict);
+        assertEq(got.confidence, a.confidence);
+        assertEq(got.severity, a.severity);
+        assertEq(got.status, a.status);
+        assertEq(got.isSeeded, a.isSeeded);
+        assertEq(got.createdAt, a.createdAt);
+    }
+
+    function test_KeccakIdMatchesRegistryAlgorithm() public pure {
+        AntibodyLib.Antibody memory a;
+        a.abType = 1;
+        a.flavor = 2;
+        a.primaryMatcherHash = bytes32(uint256(0x1234));
+        a.publisher = address(0xBEEF);
+        bytes32 expected = keccak256(abi.encode(uint8(1), uint8(2), bytes32(uint256(0x1234)), address(0xBEEF)));
+        assertEq(AntibodyLib.computeKeccakId(a), expected);
+    }
+
+    function test_IdempotentOverwrite() public {
+        AntibodyLib.Antibody memory a = _addressAntibody(publisher, bytes32(uint256(1)));
+        a.severity = 50;
+        bytes32 id = AntibodyLib.computeKeccakId(a);
+
+        vm.prank(relayer);
+        mirror.mirrorAntibody(a, bytes32(0));
+        assertEq(mirror.getAntibody(id).severity, 50);
+
+        a.severity = 95;
+        vm.prank(relayer);
+        mirror.mirrorAntibody(a, bytes32(0));
+        assertEq(mirror.getAntibody(id).severity, 95, "second call overwrites");
+    }
+
+    function test_GetAntibodyReturnsZeroForUnknown() public view {
+        AntibodyLib.Antibody memory got = mirror.getAntibody(bytes32(uint256(0xdead)));
+        assertEq(got.publisher, address(0));
+        assertEq(got.primaryMatcherHash, bytes32(0));
+    }
+
+    function testFuzz_RoundTripPreservesPackedFields(
+        address pub,
+        uint64 stakeLockUntil,
+        uint32 immSeq,
+        uint96 stakeAmount,
+        bytes32 evidenceCid
+    ) public {
+        vm.assume(pub != address(0));
+        AntibodyLib.Antibody memory a;
+        a.publisher = pub;
+        a.stakeLockUntil = stakeLockUntil;
+        a.immSeq = immSeq;
+        a.stakeAmount = stakeAmount;
+        a.evidenceCid = evidenceCid;
+
+        bytes32 id = AntibodyLib.computeKeccakId(a);
+        vm.prank(relayer);
+        mirror.mirrorAntibody(a, bytes32(0));
+
+        AntibodyLib.Antibody memory got = mirror.getAntibody(id);
+        assertEq(got.publisher, pub, "publisher truncated");
+        assertEq(got.stakeLockUntil, stakeLockUntil, "stakeLockUntil truncated");
+        assertEq(got.immSeq, immSeq, "immSeq truncated");
+        assertEq(got.stakeAmount, stakeAmount, "stakeAmount truncated");
+        assertEq(got.evidenceCid, evidenceCid, "evidenceCid mangled");
+    }
+}
+
 contract MirrorAccessControlTest is MirrorTest {
     function test_ConstructorSetsAdminAndRelayer() public view {
         assertEq(mirror.admin(), admin, "admin");
