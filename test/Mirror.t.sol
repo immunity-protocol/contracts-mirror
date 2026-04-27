@@ -292,6 +292,122 @@ contract MirrorAddressIndexTest is MirrorTest {
     }
 }
 
+contract MirrorPublisherIndexTest is MirrorTest {
+    function test_PublisherIndexAppendsOnFirstMirror() public {
+        AntibodyLib.Antibody memory a = _addressAntibody(publisher, bytes32(uint256(1)));
+        bytes32 id = AntibodyLib.computeKeccakId(a);
+
+        vm.prank(relayer);
+        mirror.mirrorAntibody(a, bytes32(0));
+
+        bytes32[] memory list = mirror.getAntibodiesByPublisher(publisher);
+        assertEq(list.length, 1);
+        assertEq(list[0], id);
+    }
+
+    function test_PublisherIndexDoesNotDoubleAppendOnIdempotentMirror() public {
+        AntibodyLib.Antibody memory a = _addressAntibody(publisher, bytes32(uint256(1)));
+
+        vm.startPrank(relayer);
+        mirror.mirrorAntibody(a, bytes32(0));
+        a.severity = 99;
+        mirror.mirrorAntibody(a, bytes32(0));
+        vm.stopPrank();
+
+        bytes32[] memory list = mirror.getAntibodiesByPublisher(publisher);
+        assertEq(list.length, 1, "second mirror must not duplicate");
+    }
+
+    function test_PublisherIndexInsertionOrder() public {
+        bytes32[3] memory matchers = [bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3))];
+        bytes32[3] memory ids;
+
+        vm.startPrank(relayer);
+        for (uint256 i; i < 3; i++) {
+            AntibodyLib.Antibody memory a = _addressAntibody(publisher, matchers[i]);
+            ids[i] = AntibodyLib.computeKeccakId(a);
+            mirror.mirrorAntibody(a, bytes32(0));
+        }
+        vm.stopPrank();
+
+        bytes32[] memory list = mirror.getAntibodiesByPublisher(publisher);
+        assertEq(list.length, 3);
+        assertEq(list[0], ids[0]);
+        assertEq(list[1], ids[1]);
+        assertEq(list[2], ids[2]);
+    }
+
+    function test_PublisherIndexIsolatedPerPublisher() public {
+        address pubB = makeAddr("publisherB");
+        AntibodyLib.Antibody memory aA = _addressAntibody(publisher, bytes32(uint256(1)));
+        AntibodyLib.Antibody memory aB = _addressAntibody(pubB, bytes32(uint256(1)));
+
+        vm.startPrank(relayer);
+        mirror.mirrorAntibody(aA, bytes32(0));
+        mirror.mirrorAntibody(aB, bytes32(0));
+        vm.stopPrank();
+
+        assertEq(mirror.getAntibodiesByPublisher(publisher).length, 1);
+        assertEq(mirror.getAntibodiesByPublisher(pubB).length, 1);
+    }
+
+    function test_MirrorAddressAntibody_AppendsToPublisherIndex() public {
+        AntibodyLib.Antibody memory a = _addressAntibody(publisher, bytes32(uint256(1)));
+        bytes32 id = AntibodyLib.computeKeccakId(a);
+
+        vm.prank(relayer);
+        mirror.mirrorAddressAntibody(a, makeAddr("target"));
+
+        bytes32[] memory list = mirror.getAntibodiesByPublisher(publisher);
+        assertEq(list.length, 1);
+        assertEq(list[0], id);
+    }
+
+    function test_GetAntibodiesByPublisher_EmptyForUnknown() public {
+        bytes32[] memory list = mirror.getAntibodiesByPublisher(makeAddr("nobody"));
+        assertEq(list.length, 0);
+    }
+
+    function test_UnmirrorAntibody_DeletesEnvelope() public {
+        AntibodyLib.Antibody memory a = _addressAntibody(publisher, bytes32(uint256(1)));
+        bytes32 id = AntibodyLib.computeKeccakId(a);
+
+        vm.startPrank(relayer);
+        mirror.mirrorAntibody(a, bytes32(0));
+        assertEq(mirror.getAntibody(id).publisher, publisher);
+
+        vm.expectEmit(true, false, false, false);
+        emit IMirror.AntibodyUnmirrored(id);
+        mirror.unmirrorAntibody(id);
+        vm.stopPrank();
+
+        assertEq(mirror.getAntibody(id).publisher, address(0));
+    }
+
+    function test_UnmirrorAntibody_RevertsIfNotMirrored() public {
+        bytes32 unknownId = keccak256("ghost");
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(IMirror.AntibodyNotMirrored.selector, unknownId));
+        mirror.unmirrorAntibody(unknownId);
+    }
+
+    function test_UnmirrorAntibody_LeavesPublisherIndexAsHistorical() public {
+        AntibodyLib.Antibody memory a = _addressAntibody(publisher, bytes32(uint256(1)));
+        bytes32 id = AntibodyLib.computeKeccakId(a);
+
+        vm.startPrank(relayer);
+        mirror.mirrorAntibody(a, bytes32(0));
+        mirror.unmirrorAntibody(id);
+        vm.stopPrank();
+
+        // Documented behavior: historical entry remains; consumers filter
+        // on getAntibody(id).publisher != address(0).
+        bytes32[] memory list = mirror.getAntibodiesByPublisher(publisher);
+        assertEq(list.length, 1);
+        assertEq(mirror.getAntibody(list[0]).publisher, address(0));
+    }
+}
+
 contract MirrorAccessControlTest is MirrorTest {
     function test_ConstructorSetsAdminAndRelayer() public view {
         assertEq(mirror.admin(), admin, "admin");
