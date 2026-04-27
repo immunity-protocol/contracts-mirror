@@ -132,6 +132,82 @@ contract MirrorRoundTripTest is MirrorTest {
     }
 }
 
+contract MirrorAuxiliaryEventTest is MirrorTest {
+    function _typedAntibody(uint8 abType, uint8 flavor) internal view returns (AntibodyLib.Antibody memory a) {
+        a = _addressAntibody(publisher, bytes32(uint256(0xfeed)));
+        a.abType = abType;
+        a.flavor = flavor;
+    }
+
+    function test_AddressType_EmitsAddressBlocked() public {
+        AntibodyLib.Antibody memory a = _typedAntibody(uint8(AntibodyLib.AntibodyType.ADDRESS), 0);
+        bytes32 id = AntibodyLib.computeKeccakId(a);
+        address target = makeAddr("target");
+        bytes32 auxKey = bytes32(uint256(uint160(target)));
+
+        vm.prank(relayer);
+        vm.expectEmit(true, true, true, true);
+        emit IMirror.AddressBlocked(target, id, publisher);
+        mirror.mirrorAntibody(a, auxKey);
+    }
+
+    function test_CallPatternType_EmitsCallPatternBlocked() public {
+        AntibodyLib.Antibody memory a = _typedAntibody(uint8(AntibodyLib.AntibodyType.CALL_PATTERN), 0);
+        bytes32 id = AntibodyLib.computeKeccakId(a);
+        bytes4 selector = 0xdeadbeef;
+        bytes32 auxKey = bytes32(selector);
+
+        vm.prank(relayer);
+        vm.expectEmit(true, true, true, true);
+        emit IMirror.CallPatternBlocked(selector, id, publisher);
+        mirror.mirrorAntibody(a, auxKey);
+    }
+
+    function test_BytecodeType_EmitsBytecodeBlocked() public {
+        AntibodyLib.Antibody memory a = _typedAntibody(uint8(AntibodyLib.AntibodyType.BYTECODE), 0);
+        bytes32 id = AntibodyLib.computeKeccakId(a);
+        bytes32 bytecodeHash = keccak256("evil-runtime");
+
+        vm.prank(relayer);
+        vm.expectEmit(true, true, true, true);
+        emit IMirror.BytecodeBlocked(bytecodeHash, id, publisher);
+        mirror.mirrorAntibody(a, bytecodeHash);
+    }
+
+    function test_GraphType_EmitsGraphTaintAdded() public {
+        AntibodyLib.Antibody memory a = _typedAntibody(uint8(AntibodyLib.AntibodyType.GRAPH), 0);
+        bytes32 id = AntibodyLib.computeKeccakId(a);
+        bytes32 taintSetId = keccak256("graph-cluster-7");
+
+        vm.prank(relayer);
+        vm.expectEmit(true, true, true, true);
+        emit IMirror.GraphTaintAdded(taintSetId, id, publisher);
+        mirror.mirrorAntibody(a, taintSetId);
+    }
+
+    function test_SemanticType_EmitsSemanticPatternAddedWithFlavor() public {
+        uint8 flavor = 7;
+        AntibodyLib.Antibody memory a = _typedAntibody(uint8(AntibodyLib.AntibodyType.SEMANTIC), flavor);
+        bytes32 id = AntibodyLib.computeKeccakId(a);
+
+        vm.prank(relayer);
+        vm.expectEmit(true, true, true, true);
+        // auxiliaryKey is unused for SEMANTIC; emitted indexed key is `flavor`.
+        emit IMirror.SemanticPatternAdded(flavor, id, publisher);
+        mirror.mirrorAntibody(a, bytes32(0));
+    }
+
+    function test_AlwaysEmitsAntibodyMirrored() public {
+        AntibodyLib.Antibody memory a = _typedAntibody(uint8(AntibodyLib.AntibodyType.GRAPH), 3);
+        bytes32 id = AntibodyLib.computeKeccakId(a);
+
+        vm.prank(relayer);
+        vm.expectEmit(true, true, true, false);
+        emit IMirror.AntibodyMirrored(id, publisher, uint8(AntibodyLib.AntibodyType.GRAPH));
+        mirror.mirrorAntibody(a, bytes32(uint256(1)));
+    }
+}
+
 contract MirrorAccessControlTest is MirrorTest {
     function test_ConstructorSetsAdminAndRelayer() public view {
         assertEq(mirror.admin(), admin, "admin");
