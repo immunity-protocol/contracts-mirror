@@ -57,10 +57,34 @@ contract Mirror is IMirror {
     ///      overwrites the slot in place. The keccakId is derived from
     ///      the struct (same algorithm as the Registry) — no need to
     ///      trust a relayer-supplied id.
-    function mirrorAntibody(AntibodyLib.Antibody calldata a, bytes32 /*auxiliaryKey*/) external onlyRelayer {
+    function mirrorAntibody(AntibodyLib.Antibody calldata a, bytes32 auxiliaryKey) external onlyRelayer {
         bytes32 keccakId = AntibodyLib.computeKeccakId(a);
         _antibodies[keccakId] = a;
         emit AntibodyMirrored(keccakId, a.publisher, a.abType);
+        _emitAuxiliary(a.abType, a.flavor, keccakId, auxiliaryKey, a.publisher);
+    }
+
+    /// @dev Mirrors `Registry._emitAuxiliary` so per-type indexers see
+    ///      the same event signatures across 0G and execution chains.
+    function _emitAuxiliary(
+        uint8 abType,
+        uint8 flavor,
+        bytes32 keccakId,
+        bytes32 auxKey,
+        address publisher
+    ) internal {
+        if (abType == uint8(AntibodyLib.AntibodyType.ADDRESS)) {
+            emit AddressBlocked(address(uint160(uint256(auxKey))), keccakId, publisher);
+        } else if (abType == uint8(AntibodyLib.AntibodyType.CALL_PATTERN)) {
+            emit CallPatternBlocked(bytes4(auxKey), keccakId, publisher);
+        } else if (abType == uint8(AntibodyLib.AntibodyType.BYTECODE)) {
+            emit BytecodeBlocked(auxKey, keccakId, publisher);
+        } else if (abType == uint8(AntibodyLib.AntibodyType.GRAPH)) {
+            emit GraphTaintAdded(auxKey, keccakId, publisher);
+        } else {
+            // SEMANTIC — indexed key is flavor; auxKey is unused.
+            emit SemanticPatternAdded(flavor, keccakId, publisher);
+        }
     }
 
     function mirrorAddressAntibody(AntibodyLib.Antibody calldata, address) external onlyRelayer {
