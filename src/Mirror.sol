@@ -88,8 +88,17 @@ contract Mirror is IMirror {
         }
     }
 
-    function mirrorAddressAntibody(AntibodyLib.Antibody calldata, address) external onlyRelayer {
-        revert("not implemented");
+    /// @inheritdoc IMirror
+    /// @dev Single-tx ADDRESS path. Emits exactly one `AddressBlocked`
+    ///      event (vs two if the relayer called `mirrorAntibody` then
+    ///      `setAddressBlock` separately) and saves a tx round-trip.
+    function mirrorAddressAntibody(AntibodyLib.Antibody calldata a, address target) external onlyRelayer {
+        if (target == address(0)) revert ZeroAddress();
+        bytes32 keccakId = AntibodyLib.computeKeccakId(a);
+        _antibodies[keccakId] = a;
+        blockedByAntibody[target] = keccakId;
+        emit AntibodyMirrored(keccakId, a.publisher, a.abType);
+        emit AddressBlocked(target, keccakId, a.publisher);
     }
 
     /// @inheritdoc IMirror
