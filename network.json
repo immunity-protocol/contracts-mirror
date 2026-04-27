@@ -1,0 +1,18 @@
+{
+  "11155111": {
+    "name": "sepolia",
+    "rpcUrl": "${SEPOLIA_RPC_URL}",
+    "poolManager": "0xE03A1074c86CFeDd5C142C4F04F1a1536e203543",
+    "mirror": null,
+    "hook": null,
+    "deployedAt": null
+  },
+  "84532": {
+    "name": "base-sepolia",
+    "rpcUrl": "${BASE_SEPOLIA_RPC_URL}",
+    "poolManager": "0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408",
+    "mirror": null,
+    "hook": null,
+    "deployedAt": null
+  }
+}
