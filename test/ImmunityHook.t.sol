@@ -138,6 +138,48 @@ contract ImmunityHookBlockingTest is ImmunityHookTest {
     }
 }
 
+contract ImmunityHookGasTest is ImmunityHookTest {
+    address internal token0Addr = address(0x0000000000000000000000000000000000000a01);
+    address internal token1Addr = address(0x0000000000000000000000000000000000000a02);
+    address internal swapRouter = address(0x80007e8);
+
+    function _key() internal view returns (PoolKey memory) {
+        return PoolKey({
+            currency0: Currency.wrap(token0Addr),
+            currency1: Currency.wrap(token1Addr),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: IHooks(address(hook))
+        });
+    }
+
+    function _swapParams() internal pure returns (SwapParams memory) {
+        return SwapParams({zeroForOne: true, amountSpecified: -1e18, sqrtPriceLimitX96: 4295128740});
+    }
+
+    /// @notice Per the plan target, the hook's overhead per swap must
+    ///         remain under 25,000 gas. The uniswap-explore reference
+    ///         measured 23,086 gas for a four-SLOAD trivial registry;
+    ///         our reads return bytes32 instead of bool but storage
+    ///         layout is the same, so we expect a similar number.
+    function test_GasOverheadUnder25k() public {
+        PoolKey memory key = _key();
+        SwapParams memory params = _swapParams();
+
+        // Warm storage: do one call to populate access lists, then measure.
+        vm.prank(address(POOL_MANAGER_PLACEHOLDER));
+        hook.beforeSwap(swapRouter, key, params, "");
+
+        vm.prank(address(POOL_MANAGER_PLACEHOLDER));
+        uint256 gasBefore = gasleft();
+        hook.beforeSwap(swapRouter, key, params, "");
+        uint256 gasUsed = gasBefore - gasleft();
+
+        emit log_named_uint("hook beforeSwap gas (warm)", gasUsed);
+        assertLt(gasUsed, 25_000, "hook overhead must stay under 25k");
+    }
+}
+
 contract ImmunityHookPermissionsTest is ImmunityHookTest {
     function test_HookAddressEncodesBeforeSwapFlag() public view {
         assertEq(uint160(address(hook)) & 0x3fff, Hooks.BEFORE_SWAP_FLAG, "low 14 bits must equal 0x0080");
