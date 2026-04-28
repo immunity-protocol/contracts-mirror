@@ -49,6 +49,45 @@ const MIRROR_ABI = [
   "function isBlocked(address) view returns (bytes32)",
 ];
 
+// Hook custom errors — used to decode reverts that bubble up through the
+// router. ethers won't auto-decode because the call goes through the
+// PoolManager → hook chain, not directly to the hook.
+const HOOK_ERRORS = new ethers.Interface([
+  "error TokenBlocked(address token, bytes32 keccakId)",
+  "error SenderBlocked(address sender, bytes32 keccakId)",
+  "error OriginBlocked(address origin, bytes32 keccakId)",
+]);
+
+function decodeHookRevert(err) {
+  const data = err.data ?? err.error?.data ?? err.info?.error?.data;
+  if (!data || data === "0x") return null;
+  // The PoolManager wraps hook reverts inside `Wrap(WrappedError(...))`. Try
+  // decoding the raw data first; if that fails, try stripping nested
+  // wrappers.
+  for (const candidate of unwrapCandidates(data)) {
+    try {
+      const parsed = HOOK_ERRORS.parseError(candidate);
+      return `${parsed.name}(${parsed.args.map((a) => a.toString()).join(", ")})`;
+    } catch {}
+  }
+  return null;
+}
+
+function unwrapCandidates(hex) {
+  const out = [hex];
+  // Heuristic: scan for a 4-byte selector that matches one of our known
+  // errors anywhere in the payload. Cheap and reliable for nested wraps.
+  const selectors = HOOK_ERRORS.fragments
+    .filter((f) => f.type === "error")
+    .map((f) => HOOK_ERRORS.getError(f.name).selector);
+  const buf = hex.startsWith("0x") ? hex.slice(2) : hex;
+  for (const sel of selectors) {
+    const idx = buf.indexOf(sel.slice(2).toLowerCase());
+    if (idx > 0) out.push("0x" + buf.slice(idx));
+  }
+  return out;
+}
+
 const ROUTER_ABI = [
   {
     type: "function",
@@ -136,9 +175,10 @@ async function doSwap(label) {
     return { ok: true, txHash: tx.hash, gasUsed: rcpt.gasUsed, ms };
   } catch (err) {
     const ms = Date.now() - t0;
-    const reason = err.reason ?? err.shortMessage ?? err.message?.split("\n")[0] ?? "unknown";
+    const decoded = decodeHookRevert(err);
+    const reason = decoded ?? err.reason ?? err.shortMessage ?? err.message?.split("\n")[0] ?? "unknown";
     console.log(`  ❌ ${label}: REVERT after ${ms}ms — ${reason}`);
-    return { ok: false, reason, ms };
+    return { ok: false, reason, decoded, ms };
   }
 }
 
@@ -212,8 +252,13 @@ async function main() {
   }
 
   const ok = r1.ok && !r3.ok && r5.ok;
-  if (!ok) {
-    console.error("\nFAIL — pattern did not match SUCCESS / REVERT / SUCCESS");
+  // Stronger assertion: phase-3 must be the TokenBlocked error specifically,
+  // not some other revert. If we couldn't decode, fail loudly.
+  const r3IsTokenBlocked = r3.decoded?.startsWith("TokenBlocked(");
+  if (!ok || !r3IsTokenBlocked) {
+    console.error("\nFAIL — pattern did not match SUCCESS / TokenBlocked-REVERT / SUCCESS");
+    if (r3.ok) console.error("  phase 3 succeeded but should have reverted");
+    if (!r3IsTokenBlocked) console.error(`  phase 3 reverted but not with TokenBlocked: ${r3.decoded ?? r3.reason}`);
     process.exit(2);
   }
   console.log("\nOK — hook intercepts swaps as designed");
