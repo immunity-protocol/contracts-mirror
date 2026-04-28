@@ -18,3 +18,7 @@ broadcast/
 
 # Node (only if scripts/ grows JS helpers)
 node_modules/
+
+# Integration test artifacts (generated each run)
+script/integration/state.json
+script/integration/package-lock.json
