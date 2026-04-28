@@ -76,6 +76,16 @@ contract SeedIntegrationPool is Script {
         console2.log("currency1: ", Currency.unwrap(c1));
         console2.log("hook:      ", address(hook));
         console2.log("poolId:    ", vm.toString(PoolId.unwrap(key.toId())));
+
+        // Write directly so run.mjs can pick it up without manual paste.
+        string memory j = "state";
+        vm.serializeAddress(j, "INT_TOK_A", address(a));
+        vm.serializeAddress(j, "INT_TOK_B", address(b));
+        vm.serializeAddress(j, "currency0", Currency.unwrap(c0));
+        vm.serializeAddress(j, "currency1", Currency.unwrap(c1));
+        vm.serializeString(j, "poolId", vm.toString(PoolId.unwrap(key.toId())));
+        string memory out = vm.serializeUint(j, "seededAt", block.timestamp);
+        vm.writeJson(out, "./script/integration/state.json");
     }
 
     function _approve(IERC20 t) internal {
