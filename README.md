@@ -22,6 +22,7 @@ script/
   DeployMirror.s.sol          CREATE2 deploy, deterministic across chains
   DeployHook.s.sol            HookMiner + CREATE2 for the hook
   BatchDeploy.s.sol           Single-RPC convenience (Mirror + Hook)
+  integration/                Live Sepolia integration test (see below)
 test/
   Mirror.t.sol
   ImmunityHook.t.sol
@@ -98,6 +99,39 @@ event BytecodeBlocked     (bytes32 indexed bytecodeHash, bytes32 indexed keccakI
 event GraphTaintAdded     (bytes32 indexed taintSetId,   bytes32 indexed keccakId, address indexed publisher);
 event SemanticPatternAdded(uint8   indexed flavor,       bytes32 indexed keccakId, address indexed publisher);
 ```
+
+## Live integration test
+
+Unit tests prove the hook's logic against a mock mirror; the live test
+proves the **deployed** hook is wired correctly into a real Uniswap v4
+PoolManager and reads the **deployed** Mirror.
+
+One command from a funded `.env`:
+
+```bash
+./script/integration/run.sh
+```
+
+Seeds a fresh v4 pool with two mock ERC20s + the deployed hook, then
+runs a 5-phase swap dance:
+
+| Phase | Action | Expected |
+|---|---|---|
+| 1 | swap on protected pool, clean state | SUCCESS |
+| 2 | `mirror.mirrorAddressAntibody(envelope, INT_TOK_A)` | tx mined |
+| 3 | same swap | REVERT with `TokenBlocked(token, keccakId)` |
+| 4 | `mirror.setAddressBlock(INT_TOK_A, 0x00)` | tx mined |
+| 5 | same swap | SUCCESS |
+
+Exits 0 on the SUCCESS / TokenBlocked-REVERT / SUCCESS pattern,
+nonzero otherwise. To re-run the swap loop without re-seeding the pool:
+
+```bash
+./script/integration/run.sh test
+```
+
+Latest live results and tx hashes: see
+[`script/integration/README.md`](script/integration/README.md).
 
 ## Hook gas budget
 
